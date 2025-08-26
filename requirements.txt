@@ -1,0 +1,20 @@
+fastapi
+uvicorn[standard]
+google-generativeai
+python-dotenv
+PyJWT
+SQLAlchemy
+pymysql
+werkzeug
+pydantic
+python-multipart
+httpx
+
+# OAuth dependencies
+authlib
+itsdangerous
+
+# Logging and token counting dependencies
+tiktoken
+pytz
+slowapi
