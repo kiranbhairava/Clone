@@ -20,6 +20,8 @@ import time
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from schemas import MobileUpdateRequest
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,12 +72,12 @@ def get_user_id_for_rate_limiting(request):
 
 # Rate limit configuration
 RATE_LIMITS = {
-    "chat": "2/minute",
+    "chat": "7/minute",
     "create_character": "3/hour", 
-    "search": "2/minute",
-    "list_characters": "2/minute",
-    "login": "2/minute",
-    "register": "2/minute"
+    "search": "15/minute",
+    "list_characters": "10/minute",
+    "login": "10/minute",
+    "register": "10/minute"
 }
 
 # Simple in-memory token blacklist
@@ -401,50 +403,52 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
     # Get client IP
     client_ip = get_client_ip(request)
 
-    if not user_data.username or not user_data.password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username and password are required"
-        )
-    
+    # Basic validation is already done by Pydantic, but let's add extra checks
     username = user_data.username.strip()
-    
-    if len(username) < 3:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username must be at least 3 characters long"
-        )
-    
-    if len(user_data.password) < 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 6 characters long"
-        )
+    email = user_data.email.strip().lower()
+    mobile_number = user_data.mobile_number.strip()
     
     try:
+        # Check if user already exists with username, email, OR mobile number
         existing_user = db.query(User).filter(
-            (User.username == username) | (User.email == username)
+            (User.username == username) | 
+            (User.email == email) | 
+            (User.mobile_number == mobile_number)
         ).first()
         
         if existing_user:
+            # Determine what field is conflicting
+            conflict_field = ""
+            if existing_user.username == username:
+                conflict_field = "Username"
+            elif existing_user.email == email:
+                conflict_field = "Email"
+            elif existing_user.mobile_number == mobile_number:
+                conflict_field = "Mobile number"
+            
             # Log failed registration attempt
             log_error("Registration failed - user exists", {
                 "endpoint": "register", 
-                "username": username, 
+                "username": username,
+                "email": email,
+                "mobile": mobile_number,
                 "ip_address": client_ip,
-                "reason": "username_exists"
+                "reason": f"{conflict_field.lower()}_exists",
+                "conflict_field": conflict_field
             })
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username or email already exists"
+                detail=f"{conflict_field} already exists. Please use a different {conflict_field.lower()}."
             )
         
+        # Create new user
         user = User(
             username=username,
-            email=username if '@' in username else None,
+            email=email,
+            mobile_number=mobile_number,
             password_hash=generate_password_hash(user_data.password),
             is_oauth_user=False,
-            registration_ip=client_ip  # Make sure this field exists in your User model
+            registration_ip=client_ip
         )
         
         db.add(user)
@@ -457,14 +461,16 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
         
         log_api_endpoint("register", user.id, response_time_ms, True)
         log_user_activity(user.id, "user_registered", {
-            "username": username, 
+            "username": username,
+            "email": email,
+            "mobile_number": mobile_number,
             "method": "standard", 
             "ip_address": client_ip, 
             "user_agent": request.headers.get("User-Agent", "unknown")
         })
         
-        logger.info(f"New user registered: {username} from IP: {client_ip}")
-        return SuccessResponse(message="User registered successfully")
+        logger.info(f"New user registered: {username} (email: {email}, mobile: {mobile_number}) from IP: {client_ip}")
+        return SuccessResponse(message="User registered successfully! You can now login with your username, email, or mobile number.")
         
     except HTTPException:
         db.rollback()
@@ -481,7 +487,9 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
         log_api_endpoint("register", 0, response_time_ms, False)
         log_error(e, {
             "endpoint": "register", 
-            "username": username, 
+            "username": username,
+            "email": email,
+            "mobile_number": mobile_number,
             "ip_address": client_ip
         })
         logger.error(f"Registration error: {e}")
@@ -490,11 +498,10 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
             detail="Registration failed"
         )
     
-
 @app.post("/login")
 @limiter.limit(RATE_LIMITS["login"])
 async def login(request: Request, user_data: UserLogin, db: Session = Depends(get_db)):
-    """Authenticate user and return JWT token"""
+    """Authenticate user and return JWT token - can login with username, email, or mobile number"""
     
     # Get client IP
     client_ip = get_client_ip(request)
@@ -502,21 +509,24 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
     if not user_data.username or not user_data.password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username and password are required"
+            detail="Username/Email/Mobile and password are required"
         )
     
     try:
-        username = user_data.username.strip()
+        login_identifier = user_data.username.strip()
         
+        # Check if login identifier is email, mobile number, or username
         user = db.query(User).filter(
-            (User.username == username) | (User.email == username)
+            (User.username == login_identifier) | 
+            (User.email == login_identifier) | 
+            (User.mobile_number == login_identifier)
         ).first()
         
         if not user:
             # Log failed login attempt - user not found
-            logger.warning(f"Failed login attempt for '{username}' from IP: {client_ip}")
+            logger.warning(f"Failed login attempt for '{login_identifier}' from IP: {client_ip}")
             log_user_activity(0, "failed_login", {
-                "username": username,
+                "login_identifier": login_identifier,
                 "ip_address": client_ip,
                 "reason": "user_not_found",
                 "user_agent": request.headers.get("User-Agent", "unknown")
@@ -529,7 +539,8 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
         if user.is_oauth_user:
             # Log OAuth user trying standard login
             log_user_activity(user.id, "failed_login", {
-                "username": username,
+                "login_identifier": login_identifier,
+                "username": user.username,
                 "ip_address": client_ip,
                 "reason": "oauth_user_standard_login",
                 "user_agent": request.headers.get("User-Agent", "unknown")
@@ -541,9 +552,10 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
         
         if not user.password_hash or not check_password_hash(user.password_hash, user_data.password):
             # Log failed password attempt
-            logger.warning(f"Invalid password for '{username}' from IP: {client_ip}")
+            logger.warning(f"Invalid password for user '{user.username}' (tried with: {login_identifier}) from IP: {client_ip}")
             log_user_activity(user.id, "failed_login", {
-                "username": username,
+                "login_identifier": login_identifier,
+                "username": user.username,
                 "ip_address": client_ip,
                 "reason": "invalid_password",
                 "user_agent": request.headers.get("User-Agent", "unknown")
@@ -555,7 +567,7 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
         
         # Successful login - update IP and timestamp
         user.last_login = get_ist_now()
-        user.last_login_ip = client_ip  # Make sure this field exists in your User model
+        user.last_login_ip = client_ip
         db.commit()
         
         # Create JWT token with IST timestamps
@@ -576,9 +588,10 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
         )
         
         # Log successful login
-        logger.info(f"User logged in: {username} from IP: {client_ip}")
+        logger.info(f"User logged in: {user.username} (via: {login_identifier}) from IP: {client_ip}")
         log_user_activity(user.id, "user_login", {
-            "username": username,
+            "login_identifier": login_identifier,
+            "username": user.username,
             "ip_address": client_ip,
             "login_method": "standard",
             "user_agent": request.headers.get("User-Agent", "unknown")
@@ -592,6 +605,7 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
+                "mobile_number": user.mobile_number,
                 "name": user.name,
                 "is_oauth_user": user.is_oauth_user
             }
@@ -603,15 +617,14 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
         # Log unexpected errors
         log_error(e, {
             "endpoint": "login", 
-            "username": username, 
+            "login_identifier": login_identifier, 
             "ip_address": client_ip
         })
         logger.error(f"Login error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed"
-        )
-    
+        )    
 
 @app.post("/logout", response_model=SuccessResponse)
 async def logout(
@@ -632,8 +645,75 @@ async def logout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Logout failed"
         )
-    
 
+
+# Check user profile status
+@app.get("/user/profile/status")
+async def get_user_profile_status(current_user: User = Depends(get_current_user)):
+    """Check if user profile is complete (has mobile number)"""
+    try:
+        return {
+            "user_id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "mobile_number": current_user.mobile_number,
+            "is_oauth_user": current_user.is_oauth_user,
+            "profile_complete": bool(current_user.mobile_number),
+            "needs_mobile": not bool(current_user.mobile_number)
+        }
+    except Exception as e:
+        logger.error(f"Error getting user profile status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get profile status"
+        )
+
+# Update user mobile number
+@app.post("/user/update-mobile", response_model=SuccessResponse)
+async def update_user_mobile(
+    mobile_data: MobileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user's mobile number (primarily for OAuth users)"""
+    try:
+        mobile_number = mobile_data.mobile_number.strip()
+        
+        # Check if mobile number is already taken by another user
+        existing_user = db.query(User).filter(
+            User.mobile_number == mobile_number,
+            User.id != current_user.id  # Exclude current user
+        ).first()
+        
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This mobile number is already registered with another account"
+            )
+        
+        # Update current user's mobile number
+        current_user.mobile_number = mobile_number
+        db.commit()
+        
+        # Log the update
+        log_user_activity(current_user.id, "mobile_updated", {
+            "mobile_number": mobile_number,
+            "user_type": "oauth" if current_user.is_oauth_user else "standard"
+        })
+        
+        logger.info(f"Mobile number updated for user {current_user.username}: {mobile_number}")
+        
+        return SuccessResponse(message="Mobile number updated successfully!")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating mobile number: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update mobile number"
+        )
 
 
 # Simple stats viewer - add this endpoint:

@@ -97,7 +97,7 @@ async def google_login(request: Request):
 
 @oauth_router.get("/google/callback")
 async def google_callback(request: Request, db: Session = Depends(get_db)):
-    """Handle Google OAuth callback"""
+    """Handle Google OAuth callback with mobile collection flow"""
     
     if not oauth:
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -119,30 +119,31 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         # Find or create user
         user = db.query(User).filter(User.email == user_info['email']).first()
         
+        is_new_user = False
         if user:
             # Update existing user info
             user.last_login = get_ist_now()
             if not user.oauth_provider:
                 user.oauth_provider = 'google'
-                user.oauth_id = user_info.get('sub')  # Google's user ID
+                user.oauth_id = user_info.get('sub')
                 user.is_oauth_user = True
-            logger.info(f"Existing user login: {user_info['email']}")
         else:
             # Create new OAuth user
+            is_new_user = True
             user = User(
-                username=user_info['email'],  # Keep username as email for compatibility
+                username=user_info['email'],
                 email=user_info['email'],
                 name=user_info.get('name', ''),
                 oauth_provider='google',
-                oauth_id=user_info.get('sub'),  # Google's user ID
+                oauth_id=user_info.get('sub'),
                 is_oauth_user=True,
-                password_hash=None,  # No password for OAuth users
+                password_hash=None,
+                mobile_number=None,  # Will be collected later
                 last_login=get_ist_now()
             )
             db.add(user)
             db.commit()
             db.refresh(user)
-            logger.info(f"New OAuth user created: {user_info['email']}")
         
         # Generate JWT token
         jwt_secret = os.getenv('JWT_SECRET')
@@ -163,7 +164,9 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             'name': user.name or user_info.get('name', ''),
             'oauth_provider': 'google',
             'login_method': 'oauth',
-            'is_oauth_user': True
+            'is_oauth_user': True,
+            'is_new_user': str(is_new_user).lower(),
+            'needs_mobile': str(not bool(user.mobile_number)).lower()  # Key addition
         }
         
         # Redirect to frontend with auth data
@@ -171,7 +174,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         auth_params = urlencode(auth_data)
         redirect_url = f"{frontend_url}/auth/callback?{auth_params}"
         
-        logger.info(f"Google OAuth successful for user: {user_info['email']}")
+        logger.info(f"Google OAuth successful for user: {user_info['email']}, needs_mobile: {not bool(user.mobile_number)}")
         return RedirectResponse(redirect_url)
         
     except Exception as e:
@@ -182,7 +185,8 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             'message': str(e)
         })
         return RedirectResponse(f"{frontend_url}/login?{error_params}")
-
+    
+    
 @oauth_router.get("/oauth/status")
 async def oauth_status():
     """Check OAuth configuration status"""

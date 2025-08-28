@@ -1,19 +1,112 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, EmailStr
 from typing import Optional, List
 from datetime import datetime
+import re
 
 # User schemas
 class UserCreate(BaseModel):
     username: str
+    email: str  # Now required
+    mobile_number: str  # New required field
     password: str
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Email is required')
+        # Basic email validation
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, v.strip()):
+            raise ValueError('Invalid email format')
+        return v.strip().lower()
+    
+    @field_validator('mobile_number')
+    @classmethod
+    def validate_mobile_number(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Mobile number is required')
+        # Remove spaces and common separators
+        mobile = re.sub(r'[\s\-\(\)]', '', v.strip())
+        # Check if it's a valid mobile number (10 digits, optionally starting with +91)
+        if mobile.startswith('+91'):
+            mobile = mobile[3:]
+        elif mobile.startswith('91') and len(mobile) == 12:
+            mobile = mobile[2:]
+        
+        if not re.match(r'^[6-9]\d{9}$', mobile):
+            raise ValueError('Mobile number must be a valid 10-digit Indian mobile number')
+        return mobile
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Username is required')
+        username = v.strip()
+        if len(username) < 3:
+            raise ValueError('Username must be at least 3 characters long')
+        if len(username) > 50:
+            raise ValueError('Username must be less than 50 characters')
+        # Allow alphanumeric, underscore, hyphen, and dot
+        if not re.match(r'^[a-zA-Z0-9._-]+$', username):
+            raise ValueError('Username can only contain letters, numbers, dots, underscores, and hyphens')
+        return username
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        if not v:
+            raise ValueError('Password is required')
+        if len(v) < 6:
+            raise ValueError('Password must be at least 6 characters long')
+        if len(v) > 100:
+            raise ValueError('Password is too long (max 100 characters)')
+        return v
+    
+class MobileUpdateRequest(BaseModel):
+    mobile_number: str
+    
+    @field_validator('mobile_number')
+    @classmethod
+    def validate_mobile_number(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Mobile number is required')
+        # Remove spaces and common separators
+        mobile = re.sub(r'[\s\-\(\)]', '', v.strip())
+        # Check if it's a valid mobile number (10 digits, optionally starting with +91)
+        if mobile.startswith('+91'):
+            mobile = mobile[3:]
+        elif mobile.startswith('91') and len(mobile) == 12:
+            mobile = mobile[2:]
+        
+        if not re.match(r'^[6-9]\d{9}$', mobile):
+            raise ValueError('Mobile number must be a valid 10-digit Indian mobile number')
+        return mobile
 
 class UserLogin(BaseModel):
-    username: str
+    username: str  # Can be username, email, or mobile number
     password: str
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Username/Email/Mobile is required')
+        return v.strip()
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        if not v:
+            raise ValueError('Password is required')
+        return v
 
 class UserResponse(BaseModel):
     id: int
     username: str
+    email: Optional[str] = None
+    mobile_number: Optional[str] = None
     created_at: datetime
     
     class Config:

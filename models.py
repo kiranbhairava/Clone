@@ -133,6 +133,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(100), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=True, index=True)
+    mobile_number = Column(String(20), unique=True, nullable=True, index=True)  # NEW: Mobile number field
     name = Column(String(255), nullable=True)
     password_hash = Column(String(255), nullable=True)  # Nullable for OAuth users
     
@@ -153,7 +154,7 @@ class User(Base):
     sessions = relationship("ConversationSession", back_populates="user")
     
     def __repr__(self):
-        return f"<User(id={self.id}, username='{self.username}', email='{self.email}')>"
+        return f"<User(id={self.id}, username='{self.username}', email='{self.email}', mobile='{self.mobile_number}')>"
 
 class Character(Base):
     __tablename__ = "characters"
