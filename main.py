@@ -262,7 +262,7 @@ def initialize_ai_model():
             vertexai.init(project=project_id, location="us-central1")
             
             model = GenerativeModel(
-                model_name="gemini-1.5-pro-002",  # Best model available
+                model_name="gemini-2.5-pro",  # Best model available
                 generation_config={
                     "temperature": 0.7,
                     "top_p": 0.95,
@@ -270,7 +270,7 @@ def initialize_ai_model():
                     "max_output_tokens": 2048,
                 }
             )
-            logger.info("✅ Vertex AI (Gemini 1.5 Pro) initialized successfully")
+            logger.info(f"✅ Vertex AI Gemini-2.5-pro initialized successfully")
             return model, "vertex"
     except Exception as e:
         logger.warning(f"Vertex AI failed, using fallback: {e}")
