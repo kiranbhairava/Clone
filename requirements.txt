@@ -14,6 +14,8 @@ httpx
 # OAuth dependencies
 authlib
 itsdangerous
+google-cloud-aiplatform
+
 
 # Logging and token counting dependencies
 tiktoken
