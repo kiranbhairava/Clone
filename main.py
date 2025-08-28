@@ -229,22 +229,76 @@ validate_environment()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Initialize Gemini
+# # Initialize Gemini
+# try:
+#     genai.configure(api_key=GOOGLE_API_KEY)
+#     model = genai.GenerativeModel(
+#         # model_name="gemini-2.0-flash",
+#         model_name="gemini-2.0-flash-lite",
+#         generation_config={
+#             "temperature": 0.7,
+#             "top_p": 0.95,
+#             "top_k": 50,
+#             "max_output_tokens": 1000,
+#         }
+#     )
+#     logger.info("Gemini AI model initialized successfully")
+# except Exception as e:
+#     logger.error(f"Failed to initialize Gemini AI: {e}")
+#     raise
+
+# Add this import at the top with your other imports
+import vertexai
+from vertexai.generative_models import GenerativeModel
+
+# Replace your existing Gemini initialization with this:
+def initialize_ai_model():
+    """Initialize Vertex AI with fallback to Google AI Studio"""
+    
+    # Try Vertex AI first (recommended)
+    try:
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+        if project_id:
+            vertexai.init(project=project_id, location="us-central1")
+            
+            model = GenerativeModel(
+                model_name="gemini-2.5-pro",  # Best model available
+                generation_config={
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "top_k": 50,
+                    "max_output_tokens": 2048,
+                }
+            )
+            logger.info("✅ Vertex AI (Gemini 1.5 Pro) initialized successfully")
+            return model, "vertex"
+    except Exception as e:
+        logger.warning(f"Vertex AI failed, using fallback: {e}")
+    
+    # Fallback to Google AI Studio
+    try:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash-lite",
+            generation_config={
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "top_k": 50,
+                "max_output_tokens": 1000,
+            }
+        )
+        logger.info("✅ Google AI Studio (fallback) initialized successfully")
+        return model, "ai_studio"
+    except Exception as e:
+        logger.error(f"Both AI services failed: {e}")
+        raise
+
+# Initialize the model
 try:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    model = genai.GenerativeModel(
-        # model_name="gemini-2.0-flash",
-        model_name="gemini-2.0-flash-lite",
-        generation_config={
-            "temperature": 0.7,
-            "top_p": 0.95,
-            "top_k": 50,
-            "max_output_tokens": 1000,
-        }
-    )
-    logger.info("Gemini AI model initialized successfully")
+    model, ai_provider = initialize_ai_model()
+    logger.info(f"AI Provider: {ai_provider}")
 except Exception as e:
-    logger.error(f"Failed to initialize Gemini AI: {e}")
+    logger.error(f"Failed to initialize AI model: {e}")
     raise
 
 # Security
@@ -949,20 +1003,27 @@ async def chat_with_character(
             response = model.generate_content(
                 complete_prompt,
                 generation_config={
-                    "max_output_tokens": 1500,
+                    "max_output_tokens": 2048 if ai_provider == "vertex" else 1500,
                     "temperature": 0.3,
                     "top_p": 0.95,
                     "top_k": 50
                 }
             )
             
-            if hasattr(response, 'text') and response.text:
-                reply = response.text.strip()
-            elif hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content:
-                        reply = candidate.content.text.strip()
-                        break
+            # Handle both Vertex AI and Google AI Studio responses
+            if ai_provider == "vertex":
+                # Vertex AI response
+                if response.text:
+                    reply = response.text.strip()
+            else:
+                # Google AI Studio response
+                if hasattr(response, 'text') and response.text:
+                    reply = response.text.strip()
+                elif hasattr(response, 'candidates') and response.candidates:
+                    for candidate in response.candidates:
+                        if hasattr(candidate, 'content') and candidate.content:
+                            reply = candidate.content.text.strip()
+                            break
             
             if not reply:
                 fallback_responses = {
