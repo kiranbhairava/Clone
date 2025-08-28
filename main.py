@@ -262,7 +262,7 @@ def initialize_ai_model():
             vertexai.init(project=project_id, location="us-central1")
             
             model = GenerativeModel(
-                model_name="gemini-1.5-pro",  # Best model available
+                model_name="gemini-1.5-pro-002",  # Best model available
                 generation_config={
                     "temperature": 0.7,
                     "top_p": 0.95,
